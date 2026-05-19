@@ -1,0 +1,41 @@
+{
+  "_note": "Synthetic fixture representing a Soroswap USDC→XLM swap on testnet",
+  "source_account": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+  "tx_hash": "soroswap_fixture_001",
+  "auth_entries": [],
+  "diagnostic_events": [],
+  "synthetic": true,
+  "description": {
+    "protocol": "Soroswap",
+    "operations": [
+      {
+        "contract": "CSOROSWAPROU000000000000000000000000000000000000000000000",
+        "function": "swap_exact_tokens_for_tokens",
+        "args": {
+          "amount_in": 100000000,
+          "amount_out_min": 90000000,
+          "path": [
+            "CUSDCTOKEN00000000000000000000000000000000000000000000000",
+            "CXLMTOKEN000000000000000000000000000000000000000000000000"
+          ],
+          "to": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+          "deadline": 9999999999
+        }
+      }
+    ],
+    "token_flows": [
+      {
+        "token": "CUSDCTOKEN00000000000000000000000000000000000000000000000",
+        "from": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        "to": "CSOROSWAPPAIR000000000000000000000000000000000000000000",
+        "amount": 100000000
+      },
+      {
+        "token": "CXLMTOKEN000000000000000000000000000000000000000000000000",
+        "from": "CSOROSWAPPAIR000000000000000000000000000000000000000000",
+        "to": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        "amount": 93000000
+      }
+    ]
+  }
+}

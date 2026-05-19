@@ -1,0 +1,37 @@
+{
+  "_note": "Synthetic fixture representing a Blend backstop claim + pool deposit on testnet",
+  "source_account": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+  "tx_hash": "blend_fixture_001",
+  "auth_entries": [],
+  "diagnostic_events": [],
+  "synthetic": true,
+  "description": {
+    "protocol": "Blend",
+    "operations": [
+      {
+        "contract": "CBLENDBACKSTOP000000000000000000000000000000000000000000",
+        "function": "claim",
+        "args": {
+          "from": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+          "pool_addresses": ["CBLENDPOOL00000000000000000000000000000000000000000000000"]
+        }
+      },
+      {
+        "contract": "CBLENDPOOL00000000000000000000000000000000000000000000000",
+        "function": "deposit",
+        "args": {
+          "from": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+          "amount": 1500000000
+        }
+      }
+    ],
+    "token_flows": [
+      {
+        "token": "CBLNDTOKEN00000000000000000000000000000000000000000000000",
+        "from": "CBLENDBACKSTOP000000000000000000000000000000000000000000",
+        "to": "CBLENDPOOL00000000000000000000000000000000000000000000000",
+        "amount": 1500000000
+      }
+    ]
+  }
+}

@@ -1,0 +1,19 @@
+[package]
+name    = "oz-policy-integration-tests"
+version = "0.1.0"
+edition = "2021"
+
+[[test]]
+name = "blend_walkthrough"
+path = "integration/blend_walkthrough.rs"
+
+[[test]]
+name = "soroswap_walkthrough"
+path = "integration/soroswap_walkthrough.rs"
+
+[[test]]
+name = "sep41_walkthrough"
+path = "integration/sep41_walkthrough.rs"
+
+[dependencies]
+oz-policy-builder-core = { path = "../packages/core" }

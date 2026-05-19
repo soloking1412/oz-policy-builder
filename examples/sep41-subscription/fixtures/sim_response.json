@@ -1,0 +1,43 @@
+{
+  "_note": "Synthetic stand-in. Run `tsx record.ts <tx_hash>` against testnet to replace with real XDR.",
+  "source_account": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+  "tx_hash": "sep41_example_placeholder",
+  "auth_entries": [],
+  "diagnostic_events": [],
+  "synthetic": true,
+  "expected_ir": {
+    "protocol": "SEP-41 Subscription",
+    "auth_roots": [
+      {
+        "signer": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        "contract": "CUSDCTOKEN00000000000000000000000000000000000000000000000",
+        "function": "approve",
+        "args": [
+          { "type": "Address", "value": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF" },
+          { "type": "Address", "value": "CSUBSCRIBER00000000000000000000000000000000000000000000" },
+          { "type": "I128", "value": 10000000 },
+          { "type": "U32", "value": 200000 }
+        ]
+      },
+      {
+        "signer": "CSUBSCRIBER00000000000000000000000000000000000000000000",
+        "contract": "CUSDCTOKEN00000000000000000000000000000000000000000000000",
+        "function": "transfer_from",
+        "args": [
+          { "type": "Address", "value": "CSUBSCRIBER00000000000000000000000000000000000000000000" },
+          { "type": "Address", "value": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF" },
+          { "type": "Address", "value": "CBENEFICIARY0000000000000000000000000000000000000000000" },
+          { "type": "I128", "value": 10000000 }
+        ]
+      }
+    ],
+    "token_flows": [
+      {
+        "token": "CUSDCTOKEN00000000000000000000000000000000000000000000000",
+        "from": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        "to": "CBENEFICIARY0000000000000000000000000000000000000000000",
+        "amount": 10000000
+      }
+    ]
+  }
+}

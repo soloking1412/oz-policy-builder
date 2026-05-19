@@ -1,0 +1,39 @@
+{
+  "_note": "Synthetic stand-in. Run `tsx record.ts <tx_hash>` against testnet to replace with real XDR.",
+  "source_account": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+  "tx_hash": "blend_example_placeholder",
+  "auth_entries": [],
+  "diagnostic_events": [],
+  "synthetic": true,
+  "expected_ir": {
+    "protocol": "Blend",
+    "auth_roots": [
+      {
+        "signer": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        "contract": "CBLENDBACKSTOP000000000000000000000000000000000000000000",
+        "function": "claim",
+        "args": [
+          { "type": "Address", "value": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF" },
+          { "type": "Vec", "value": [{ "type": "Address", "value": "CBLENDPOOL00000000000000000000000000000000000000000000000" }] }
+        ]
+      },
+      {
+        "signer": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        "contract": "CBLENDPOOL00000000000000000000000000000000000000000000000",
+        "function": "deposit",
+        "args": [
+          { "type": "Address", "value": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF" },
+          { "type": "I128", "value": 1500000000 }
+        ]
+      }
+    ],
+    "token_flows": [
+      {
+        "token": "CBLNDTOKEN00000000000000000000000000000000000000000000000",
+        "from": "CBLENDBACKSTOP000000000000000000000000000000000000000000",
+        "to": "CBLENDPOOL00000000000000000000000000000000000000000000000",
+        "amount": 1500000000
+      }
+    ]
+  }
+}

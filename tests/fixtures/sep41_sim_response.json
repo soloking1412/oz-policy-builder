@@ -1,0 +1,41 @@
+{
+  "_note": "Synthetic fixture representing a SEP-41 subscription approve + transfer_from flow",
+  "source_account": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+  "tx_hash": "sep41_fixture_001",
+  "auth_entries": [],
+  "diagnostic_events": [],
+  "synthetic": true,
+  "description": {
+    "protocol": "SEP-41 Subscription",
+    "operations": [
+      {
+        "contract": "CUSDCTOKEN00000000000000000000000000000000000000000000000",
+        "function": "approve",
+        "args": {
+          "from": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+          "spender": "CSUBSCRIBER00000000000000000000000000000000000000000000",
+          "amount": 10000000,
+          "expiration_ledger": 200000
+        }
+      },
+      {
+        "contract": "CUSDCTOKEN00000000000000000000000000000000000000000000000",
+        "function": "transfer_from",
+        "args": {
+          "spender": "CSUBSCRIBER00000000000000000000000000000000000000000000",
+          "from": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+          "to": "CBENEFICIARY0000000000000000000000000000000000000000000",
+          "amount": 10000000
+        }
+      }
+    ],
+    "token_flows": [
+      {
+        "token": "CUSDCTOKEN00000000000000000000000000000000000000000000000",
+        "from": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        "to": "CBENEFICIARY0000000000000000000000000000000000000000000",
+        "amount": 10000000
+      }
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+[package]
+name    = "oz-policy-core"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "oz-policy-core"
+path = "src/main.rs"
+
+[dependencies]
+oz-policy-builder-core = { path = "../core" }
+serde                  = { workspace = true }
+serde_json             = { workspace = true }

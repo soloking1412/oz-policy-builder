@@ -1,0 +1,45 @@
+{
+  "_note": "Synthetic stand-in. Run `tsx record.ts <tx_hash>` against testnet to replace with real XDR.",
+  "source_account": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+  "tx_hash": "soroswap_example_placeholder",
+  "auth_entries": [],
+  "diagnostic_events": [],
+  "synthetic": true,
+  "expected_ir": {
+    "protocol": "Soroswap",
+    "auth_roots": [
+      {
+        "signer": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        "contract": "CSOROSWAPROU000000000000000000000000000000000000000000000",
+        "function": "swap_exact_tokens_for_tokens",
+        "args": [
+          { "type": "I128", "value": 100000000 },
+          { "type": "I128", "value": 90000000 },
+          {
+            "type": "Vec",
+            "value": [
+              { "type": "Address", "value": "CUSDCTOKEN00000000000000000000000000000000000000000000000" },
+              { "type": "Address", "value": "CXLMTOKEN000000000000000000000000000000000000000000000000" }
+            ]
+          },
+          { "type": "Address", "value": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF" },
+          { "type": "U64", "value": 9999999999 }
+        ]
+      }
+    ],
+    "token_flows": [
+      {
+        "token": "CUSDCTOKEN00000000000000000000000000000000000000000000000",
+        "from": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        "to": "CSOROSWAPPAIR000000000000000000000000000000000000000000",
+        "amount": 100000000
+      },
+      {
+        "token": "CXLMTOKEN000000000000000000000000000000000000000000000000",
+        "from": "CSOROSWAPPAIR000000000000000000000000000000000000000000",
+        "to": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        "amount": 93000000
+      }
+    ]
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "oz-policy-builder",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@9.14.4",
+  "scripts": {
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "dev": "turbo run dev"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.3"
+  }
+}
