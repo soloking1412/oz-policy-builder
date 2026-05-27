@@ -125,6 +125,8 @@ bash scripts/e2e.sh
 
 ## Docs
 
+- `docs/architecture.md` — the system end to end: process topology, wire format, components,
+  security model, file layout.
 - `docs/synthesizer-decisions.md` — every branch of the decision tree, and how amounts and
   weights are derived.
 - `docs/extending-primitives.md` — how to add a new policy primitive when OZ ships one.

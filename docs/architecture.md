@@ -1,0 +1,415 @@
+# Architecture
+
+This document describes what's actually in the repo and how the pieces talk to
+each other. It's the reference for someone who needs to audit, extend, or
+embed the system. For the synthesizer's branching logic see
+`synthesizer-decisions.md`; for wallet wiring see `wallet-integration.md`.
+
+## What the system is
+
+A pipeline that turns a Stellar transaction into an OpenZeppelin smart account
+policy. You hand it a tx hash (or a simulated XDR), it parses the auth tree,
+classifies the call into one of four policy kinds, and emits a Rust crate
+plus a permit/deny test report. Nothing is deployed by the tool.
+
+Four stages, in order:
+
+```
+  observe ─►  synthesize ─►  generate ─►  harness
+  (TS)        (Rust)         (Rust)       (Rust)
+```
+
+A fifth step — compiling, signing, submitting — is the operator's job and
+is not automated.
+
+## Process topology
+
+There are two processes:
+
+1. **MCP server** (Node.js, TypeScript). Exposes five tools over the Model
+   Context Protocol (stdio transport today). Owns all XDR parsing using
+   `@stellar/stellar-sdk`. Lives in `packages/mcp-server`.
+2. **Core binary** (`oz-policy-core`, Rust). A small CLI that reads one
+   JSON request from stdin, writes one JSON response to stdout, then exits.
+   No long-lived state. Lives in `packages/core`, built to
+   `target/release/oz-policy-core`.
+
+The server shells out to the binary for every analyze/synthesize/generate/harness
+call. The binary path is resolved via `OZ_POLICY_CORE_BIN` or, by default,
+relative to the server entrypoint (`packages/mcp-server/src/index.ts` →
+`../../../target/release/oz-policy-core`). Timeout is 30s per call,
+enforced server-side in `bridge/subprocess.ts`.
+
+### Why a two-language split
+
+XDR types change with every Soroban release. `@stellar/stellar-sdk` is the
+library Stellar already maintains for that. Pushing XDR into Rust would mean
+shipping our own parser or pinning a Rust XDR crate that lags. Keeping it in
+TypeScript means the version-sensitive layer is somebody else's problem.
+
+The Rust core only needs structured JSON (`SimulationInput`), so its API is
+small and stable. The boundary is one type per direction (see "Wire format"
+below).
+
+## Data flow
+
+```
+  tx_hash / xdr
+        │
+        ▼
+  ┌──────────────────────────────────┐
+  │  observe_transaction             │  Soroban RPC fetch + XDR decode
+  │  observe_simulation              │  (TS, stellar-sdk)
+  └──────────────────────────────────┘
+        │
+        ▼   SimulationInput { auth_roots, token_flows?, source_account, tx_hash? }
+        │
+  ┌──────────────────────────────────┐
+  │  CoreBridge.call(method: "analyze")
+  │  ──────────────────────────────► │
+  │  packages/core/analyzer          │  flatten auth tree, attach token flows,
+  │                                  │  detect protocols (Blend/Soroswap/SEP-41)
+  │  ◄────────────────────────────── │
+  │  TransactionIR                   │
+  └──────────────────────────────────┘
+        │
+        ▼
+  ┌──────────────────────────────────┐
+  │  CoreBridge.call(method: "synthesize")
+  │  packages/core/synthesizer       │  decision tree → PolicyKind,
+  │                                  │  allowlist + ArgConstraints, warnings
+  │  ◄────────────────────────────── │
+  │  PolicySpec                      │
+  └──────────────────────────────────┘
+        │
+        ▼
+  ┌──────────────────────────────────┐
+  │  CoreBridge.call(method: "generate")
+  │  packages/core/codegen           │  per-kind composer → Cargo.toml,
+  │                                  │  src/lib.rs, src/tests.rs as strings
+  │  ◄────────────────────────────── │
+  │  GeneratedPolicy                 │
+  └──────────────────────────────────┘
+        │
+        ▼
+  ┌──────────────────────────────────┐
+  │  CoreBridge.call(method: "run_harness")
+  │  packages/core/harness           │  auto-generate permit/deny vectors,
+  │                                  │  run in-process enforcement, report
+  │  ◄────────────────────────────── │
+  │  HarnessReport                   │
+  └──────────────────────────────────┘
+```
+
+The MCP tools (`packages/mcp-server/src/tools/`) are thin: they validate
+input with Zod schemas, call the bridge, and return the response. No
+business logic lives in the server.
+
+## Wire format
+
+The TS↔Rust boundary is a single line of JSON per direction.
+
+Request:
+
+```json
+{
+  "method": "analyze" | "synthesize" | "generate" | "run_harness",
+  "params": <method-specific>
+}
+```
+
+Response:
+
+```json
+{ "ok": true,  "data":  <method-specific> }
+{ "ok": false, "error": "...", "code": "..." }
+```
+
+Implementation in `packages/mcp-server/src/bridge/subprocess.ts`. The Rust
+side dispatches in `packages/core/src/lib.rs`. Methods and their
+input/output types:
+
+| Method        | Input                                            | Output           |
+|---------------|--------------------------------------------------|------------------|
+| `analyze`     | `SimulationInput`                                | `TransactionIR`  |
+| `synthesize`  | `{ ir: TransactionIR, options: SynthesisOptions }` | `PolicySpec`     |
+| `generate`    | `{ spec: PolicySpec, package_name: String }`     | `GeneratedPolicy`|
+| `run_harness` | `{ spec: PolicySpec, extra_permit?, extra_deny? }` | `HarnessReport` |
+
+All types are defined in `packages/core/src/ir/types.rs` and re-derived in
+the TS server's Zod schemas (`packages/mcp-server/src/types.ts`).
+
+## Components
+
+### 1. Observe (TypeScript only)
+
+Two MCP tools, two paths to a `SimulationInput`:
+
+- `observe_transaction(tx_hash, network)` — Soroban RPC `getTransaction`,
+  decode `meta.sorobanMeta.events` for SEP-41 transfers, walk
+  `auth.credentials.address.signature` to build the auth tree.
+- `observe_simulation(xdr, network)` — accept a base64 envelope, call
+  `simulateTransaction`, parse the returned `authEntries`.
+
+Shared helpers in `packages/mcp-server/src/tools/xdr-parse.ts`. RPC URLs
+in `packages/mcp-server/src/rpc.ts`.
+
+### 2. Analyzer (Rust, `packages/core/src/analyzer/`)
+
+- `invocation.rs` — BFS-flatten the auth tree, dedupe by `(signer, contract, function)`.
+- `token.rs` — match `transfer`/`transfer_from`/`burn`/`approve` calls and
+  produced events into `TokenFlow` records. Reconciles when the JSON
+  payload provides `token_flows: Some(_)` from diagnostic events.
+- `mod.rs` — entrypoint, runs both passes, returns a `TransactionIR` with
+  detected protocols (`Blend`, `Soroswap`, `Sep41`, `Unknown`).
+
+Protocol detection is pattern-based, not signature-based. A call to
+`swap_exact_tokens_for_tokens` on any contract with a `Vec<Address>` at
+arg index 2 is classed as Soroswap. Blend is detected by `claim`/`deposit`
+function names plus the backstop-then-pool topology. This is intentionally
+loose; the synthesizer doesn't rely on the protocol hint for safety
+decisions, only for hints in the `reasoning[]` trail.
+
+### 3. Synthesizer (Rust, `packages/core/src/synthesizer/`)
+
+- `decision.rs` — the kind-selection tree (see `synthesizer-decisions.md`).
+- `allowlist.rs` — collects `allowed_contracts` and builds `AllowedCall`s
+  with their `ArgConstraint`s. Argument scanning walks every `ScValIR` by
+  index and emits the matching constraint shape:
+
+  | ScVal type     | Function class            | Constraint                |
+  |----------------|---------------------------|---------------------------|
+  | `I128`, `U128` | amount-bearing            | `MaxAmount { max }`       |
+  | `Address`      | not the source account    | `ExactAddress { address }`|
+  | `Vec<Address>` | swap, arg 2               | `PathContains { allowed }`|
+  | `U64`          | swap, arg 4               | `Deadline`                |
+
+- `spending.rs` — amount ceiling = `ceil(observed × multiplier)`; default
+  multiplier `1.1`.
+- `threshold.rs` — depth-based weight inference for `WeightedThreshold`:
+  `weight = (max_depth - node_depth) + 1`.
+
+Every decision is recorded in `PolicySpec.reasoning` as a short string.
+Warnings (`single observation`, `>5 policies`) accumulate in
+`PolicySpec.warnings`.
+
+### 4. Codegen (Rust, `packages/core/src/codegen/`)
+
+One composer per kind:
+
+- `spending_limit.rs` — wraps OZ's `SpendingLimit` primitive.
+- `simple_threshold.rs` — wraps OZ's `SimpleThreshold` primitive.
+- `weighted_threshold.rs` — wraps OZ's `WeightedThreshold` primitive.
+- `custom.rs` — full `#![no_std]` Soroban contract implementing the OZ
+  `Policy` trait (`can_enforce`, `enforce`, `install`, `uninstall`).
+- `composer.rs` — dispatch, common preamble, `Cargo.toml` emission.
+
+Output is a `GeneratedPolicy { cargo_toml, lib_rs, tests_rs, warnings }` —
+three strings, ready to write to disk. The generator does not write files
+itself; that's the caller's job. This keeps the core pure and lets the MCP
+server stream the source to the user before they decide to save it.
+
+Custom-kind contracts encode constraints as `const` arrays in the contract
+and check them in `enforce`. Storage keys always include
+`(smart_account_address, context_rule_id)` per the OZ Policy trait contract.
+
+### 5. Harness (Rust, `packages/core/src/harness/`)
+
+- `generator.rs` — for a given `PolicySpec`, emit the four standard vectors:
+  - `permit_exact_observed` (the original call should pass)
+  - `deny_amount_2x` (doubled amount should fail any `MaxAmount`)
+  - `deny_wrong_contract` (substituting any contract not in `allowed_contracts`)
+  - `deny_wrong_function` (an unknown function on an allowed contract)
+- `runner.rs` — in-process simulation. Walks the spec's allowlist exactly
+  the way the generated contract would, returns `Outcome::Permit` or
+  `Outcome::Deny`. Does **not** run actual Wasm in a Soroban VM.
+
+The harness is fast and deterministic. It catches whole classes of
+synthesis bugs (wrong arg index, missing constraint, off-by-one ceiling)
+without a Soroban environment. It does **not** prove the generated Rust
+compiles or behaves identically when actually deployed; that's what the
+audit before mainnet is for.
+
+## MCP server
+
+`packages/mcp-server/src/server.ts` registers five tools and two resources.
+
+| Tool                  | Purpose                                                  |
+|-----------------------|----------------------------------------------------------|
+| `observe_transaction` | Fetch + parse a real tx by hash                          |
+| `observe_simulation`  | Simulate a tx envelope, parse the result                 |
+| `synthesize_policy`   | Run analyzer + synthesizer on an IR                      |
+| `generate_code`       | Emit the Rust crate for a given spec                     |
+| `run_harness`         | Auto-generate and run permit/deny vectors                |
+
+Resources (`packages/mcp-server/src/resources/`) expose the three reference
+policy contracts as read-only docs the agent can read inline.
+
+Transport is stdio today. The bridge and tool layer are transport-agnostic
+— moving to Streamable HTTP only touches `index.ts`.
+
+## Reference policies
+
+`packages/policies/` contains three hand-written, hand-reviewed policy
+contracts:
+
+- `blend-yield-claim/` — allow `claim` on a Blend backstop and `deposit` on
+  a pool; per-window call cap.
+- `soroswap-bounded/` — allow swaps on one router; cap `amount_in`, pin
+  the token path, enforce `deadline > current_ledger_timestamp`.
+- `sep41-subscription/` — allow `approve` and `transfer_from`; pin the
+  spender and the beneficiary; per-window call count.
+
+These are the targets the synthesizer aims at. For common patterns, a
+wallet should prefer installing one of these (pre-audited) over a freshly
+generated custom contract, parametrising via `install()`.
+
+## Security model
+
+What the system trusts:
+
+- The `@stellar/stellar-sdk` it imports. It does no XDR decoding itself.
+- The OZ smart account contract on the deploying account. The Policy
+  trait it generates against is the OZ-published one; ABI changes there
+  break codegen and need a new release of this tool.
+- The operator. Nothing is deployed without an explicit, externally-signed
+  Soroban transaction.
+
+What the system does not trust:
+
+- The observed transaction. A single tx is a sample of one; the synthesizer
+  always emits a warning when it derives a ceiling from one observation.
+- Its own generated code. Generated code is labelled in the response with
+  an unaudited flag and the harness is the only automated check before
+  human review.
+- Network input. RPC responses are parsed into typed IR before any decision
+  is made; nothing downstream sees raw RPC shapes.
+
+What's deliberately not in scope:
+
+- Automated deployment. The CLI prints `stellar contract` commands; that's
+  the end of the tool's responsibility.
+- Real Soroban VM execution. The harness simulates enforcement, it doesn't
+  run Wasm. Final correctness checking is the audit.
+- Multi-tx merging. The agent (via SKILL.md) can call `observe_*` multiple
+  times and union the results; the synthesizer doesn't do this on its own.
+
+## Extension points
+
+Adding a new policy primitive (when OZ ships one): see
+`docs/extending-primitives.md`. Concretely you add a `PolicyKind` variant,
+a branch in `decision.rs`, a composer module in `codegen/`, and a vector
+template in `harness/generator.rs`.
+
+Adding a new protocol hint: add a variant to `ProtocolHint` in `ir/types.rs`,
+extend the pattern matcher in `analyzer/mod.rs`. The synthesizer treats
+unknown protocols as Custom by default, so adding a hint is additive.
+
+Adding a constraint shape: add an `ArgConstraint` variant, an extraction
+case in `synthesizer/allowlist.rs`, an enforcement case in
+`harness/runner.rs::check_constraint`, and codegen handling in the
+relevant composer.
+
+## File layout
+
+```
+packages/
+  core/                              # Rust workspace member
+    Cargo.toml
+    src/
+      lib.rs                         # JSON dispatch entrypoint
+      error.rs                       # Result, error codes
+      ir/
+        mod.rs
+        types.rs                     # All shared types (the wire format)
+      analyzer/
+        mod.rs
+        invocation.rs                # auth tree → flat AuthNode list
+        token.rs                     # event → TokenFlow reconciliation
+      synthesizer/
+        mod.rs
+        decision.rs                  # kind selection
+        allowlist.rs                 # AllowedCall + ArgConstraint extraction
+        spending.rs                  # amount ceiling math
+        threshold.rs                 # weight inference
+      codegen/
+        mod.rs
+        composer.rs                  # dispatch + Cargo.toml
+        spending_limit.rs
+        simple_threshold.rs
+        weighted_threshold.rs
+        custom.rs                    # full no_std Soroban contract
+      harness/
+        mod.rs
+        generator.rs                 # standard permit/deny vectors
+        runner.rs                    # in-process enforcement
+  cli/                               # `oz-policy-core` binary
+  mcp-server/
+    src/
+      index.ts                       # stdio transport, bin path resolution
+      server.ts                      # MCP tool/resource registration
+      rpc.ts                         # Soroban RPC URLs
+      types.ts                       # Zod schemas mirroring Rust IR
+      bridge/
+        mod.ts
+        subprocess.ts                # spawn + JSON-over-stdio
+      tools/
+        observe-transaction.ts
+        observe-simulation.ts
+        synthesize-policy.ts
+        generate-code.ts
+        run-harness.ts
+        xdr-parse.ts                 # stellar-sdk helpers
+      resources/
+        ...                          # reference policies as MCP resources
+  policies/
+    blend-yield-claim/               # hand-written reference
+    soroswap-bounded/
+    sep41-subscription/
+
+examples/
+  record.ts                          # pull a real tx into a fixture
+  blend-yield-claim/                 # walkthrough + fixtures
+  soroswap-bounded/
+  sep41-subscription/
+
+tests/                               # integration walkthroughs
+docs/
+  architecture.md                    # this file
+  synthesizer-decisions.md
+  extending-primitives.md
+  wallet-integration.md
+
+SKILL.md                             # Claude skill driving the five tools
+scripts/e2e.sh                       # build + test + walkthrough
+```
+
+## Build and test
+
+```
+cargo build --workspace
+cargo test --workspace
+```
+
+Builds the core and the CLI, runs unit tests plus integration walkthroughs
+in `tests/`. 47 tests on a clean checkout as of this writing.
+
+```
+cd packages/mcp-server
+pnpm install
+pnpm build
+pnpm test
+```
+
+Reference policy contracts are compiled with the `wasm32v1-none` target:
+
+```
+cargo build \
+  -p blend-yield-claim-policy \
+  -p soroswap-bounded-policy \
+  -p sep41-subscription-policy \
+  --target wasm32v1-none --profile contract
+```
+
+`scripts/e2e.sh` runs the whole pipeline end to end on a synthetic Soroswap
+transaction and builds the three reference contracts.
