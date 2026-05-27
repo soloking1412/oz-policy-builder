@@ -12,15 +12,9 @@ policy. You hand it a tx hash (or a simulated XDR), it parses the auth tree,
 classifies the call into one of four policy kinds, and emits a Rust crate
 plus a permit/deny test report. Nothing is deployed by the tool.
 
-Four stages, in order:
-
-```
-  observe ─►  synthesize ─►  generate ─►  harness
-  (TS)        (Rust)         (Rust)       (Rust)
-```
-
-A fifth step — compiling, signing, submitting — is the operator's job and
-is not automated.
+Four stages, in order: **observe** (TypeScript) → **synthesize** (Rust) →
+**generate** (Rust) → **harness** (Rust). A fifth step — compiling, signing,
+submitting — is the operator's job and is not automated.
 
 ## Stellar integration
 
@@ -95,22 +89,17 @@ build against.
 
 ### Stellar deployment topology
 
-```
-  ┌──────────────┐      ┌──────────────────┐      ┌────────────────┐
-  │  User wallet │ ───► │  Smart account   │ ───► │  Policy        │
-  │  (e.g.       │      │  contract        │      │  contract      │
-  │  pollywallet)│      │  (OZ extension)  │      │  (this tool's  │
-  └──────────────┘      └──────────────────┘      │  output)       │
-         │                       ▲                 └────────────────┘
-         │                       │                          ▲
-         │  add_context_rule     │                          │ enforce()
-         └───────────────────────┘                          │
-                                                            │
-                                              ┌─────────────┴───────────┐
-                                              │  Delegated agent / bot  │
-                                              │  (uses smart account    │
-                                              │  for one scoped op)     │
-                                              └─────────────────────────┘
+```mermaid
+flowchart LR
+    W["User wallet<br/>(e.g. pollywallet)"]
+    SA["Smart account contract<br/>(OZ extension)"]
+    P["Policy contract<br/>(this tool's output)"]
+    A["Delegated agent / bot"]
+
+    W -- "add_context_rule(policy)" --> SA
+    SA -- "consults on call" --> P
+    A -- "calls scoped op" --> SA
+    P -- "enforce() result" --> SA
 ```
 
 Two on-chain transactions per install, both signed by the user:
@@ -171,53 +160,43 @@ below).
 
 ## Data flow
 
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as User / agent
+    participant T as MCP tool (TS)
+    participant B as CoreBridge (TS)
+    participant C as oz-policy-core (Rust)
+
+    U->>T: tx_hash or XDR
+    T->>T: Soroban RPC fetch + stellar-sdk decode
+    T->>B: SimulationInput
+    B->>C: { method: "analyze", params: SimulationInput }
+    C-->>B: TransactionIR (auth tree + token flows + protocol hints)
+    B-->>T: TransactionIR
+
+    U->>T: synthesize_policy(ir, options)
+    T->>B: { ir, options }
+    B->>C: { method: "synthesize", params }
+    C-->>B: PolicySpec (kind, allowlist, constraints, reasoning, warnings)
+    B-->>T: PolicySpec
+
+    U->>T: generate_code(spec, package_name)
+    T->>B: { spec, package_name }
+    B->>C: { method: "generate", params }
+    C-->>B: GeneratedPolicy (Cargo.toml, lib.rs, tests.rs)
+    B-->>T: GeneratedPolicy
+
+    U->>T: run_harness(spec)
+    T->>B: { spec }
+    B->>C: { method: "run_harness", params }
+    C-->>B: HarnessReport (permit/deny vector results)
+    B-->>T: HarnessReport
 ```
-  tx_hash / xdr
-        │
-        ▼
-  ┌──────────────────────────────────┐
-  │  observe_transaction             │  Soroban RPC fetch + XDR decode
-  │  observe_simulation              │  (TS, stellar-sdk)
-  └──────────────────────────────────┘
-        │
-        ▼   SimulationInput { auth_roots, token_flows?, source_account, tx_hash? }
-        │
-  ┌──────────────────────────────────┐
-  │  CoreBridge.call(method: "analyze")
-  │  ──────────────────────────────► │
-  │  packages/core/analyzer          │  flatten auth tree, attach token flows,
-  │                                  │  detect protocols (Blend/Soroswap/SEP-41)
-  │  ◄────────────────────────────── │
-  │  TransactionIR                   │
-  └──────────────────────────────────┘
-        │
-        ▼
-  ┌──────────────────────────────────┐
-  │  CoreBridge.call(method: "synthesize")
-  │  packages/core/synthesizer       │  decision tree → PolicyKind,
-  │                                  │  allowlist + ArgConstraints, warnings
-  │  ◄────────────────────────────── │
-  │  PolicySpec                      │
-  └──────────────────────────────────┘
-        │
-        ▼
-  ┌──────────────────────────────────┐
-  │  CoreBridge.call(method: "generate")
-  │  packages/core/codegen           │  per-kind composer → Cargo.toml,
-  │                                  │  src/lib.rs, src/tests.rs as strings
-  │  ◄────────────────────────────── │
-  │  GeneratedPolicy                 │
-  └──────────────────────────────────┘
-        │
-        ▼
-  ┌──────────────────────────────────┐
-  │  CoreBridge.call(method: "run_harness")
-  │  packages/core/harness           │  auto-generate permit/deny vectors,
-  │                                  │  run in-process enforcement, report
-  │  ◄────────────────────────────── │
-  │  HarnessReport                   │
-  └──────────────────────────────────┘
-```
+
+Each `CoreBridge.call` spawns the `oz-policy-core` binary, writes one JSON
+line to stdin, reads one JSON line from stdout, and the binary exits. No
+long-lived Rust state.
 
 The MCP tools (`packages/mcp-server/src/tools/`) are thin: they validate
 input with Zod schemas, call the bridge, and return the response. No
