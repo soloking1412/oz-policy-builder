@@ -22,6 +22,124 @@ Four stages, in order:
 A fifth step — compiling, signing, submitting — is the operator's job and
 is not automated.
 
+## Stellar integration
+
+This is a Soroban-only system. Every part of the pipeline depends on Stellar
+primitives; there is no chain-abstracted layer and no plan to add one.
+
+### Soroban primitives the tool consumes
+
+- **Soroban RPC** (`getTransaction`, `simulateTransaction`). The observe
+  tools call mainnet at `https://mainnet.sorobanrpc.com`, testnet at
+  `https://soroban-testnet.stellar.org`, and futurenet at
+  `https://rpc-futurenet.stellar.org` (defined in
+  `packages/mcp-server/src/rpc.ts`).
+- **`SorobanAuthorizationEntry`** and **`SorobanAuthorizedInvocation`**.
+  These XDR types are the input that everything else is derived from. The
+  observe tools walk the invocation tree (root + `subInvocations`) and
+  emit a flat `AuthNode[]` for the Rust core.
+- **`SorobanCredentials::Address`**. Each non-source authorization is keyed
+  off a Stellar `Address` (G... or C...). The synthesizer treats unique
+  addresses as distinct signers when deciding between `SimpleThreshold` and
+  `WeightedThreshold`.
+- **`ScVal`** as the argument value type. The TS side decodes
+  `xdr.ScVal.fromXDR(...)` and maps to our `ScValIR` enum
+  (`Address | I128 | U128 | U64 | I64 | Bool | Symbol | Bytes | Vec | Map | Void`).
+  This keeps the Rust core XDR-free while preserving the type information
+  the constraint extractor needs.
+- **Diagnostic events for SEP-41 transfers**. `TokenFlow` records come
+  from event topics `["transfer", from, to]` with the amount in `data.i128`.
+  When the diagnostic events aren't available, the analyzer falls back to
+  walking the auth tree for SEP-41 function calls.
+- **The OpenZeppelin `Policy` trait on Soroban smart accounts.** All
+  generated contracts implement `can_enforce`, `enforce`, `install`, and
+  `uninstall`. Storage keys are scoped by
+  `(smart_account_address, context_rule_id)` per the trait contract.
+  Context rules are attached via the smart account's
+  `add_context_rule(context, policy_address)`.
+- **`wasm32v1-none` target**. All generated and reference policy contracts
+  build for the Soroban Wasm target with the `contract` profile, matching
+  the toolchain OZ ships against (`soroban-sdk = 25.3.1`).
+
+### Stellar standards covered
+
+- **SEP-41** (Token Interface) — `transfer`, `transfer_from`, `approve`,
+  `burn`, `burn_from`. Detected by function name; arg shapes verified
+  against the standard. The SEP-41 subscription reference policy is built
+  directly on these calls.
+- **SEP-10** is out of scope for this tool itself, but the wallet
+  integrations that consume this tool use it for session establishment
+  (handled by Stellar Wallets Kit, not by us).
+- **OZ Smart Account context rules** — the OZ extension on top of base
+  Soroban contracts that this tool produces policies for. We track the
+  published OZ contracts and regenerate codegen templates when the trait
+  ABI changes.
+
+### Integration list partners we depend on
+
+Picked from the published SCF integration list, not invented:
+
+| Partner                  | Role in this system                                            |
+|--------------------------|----------------------------------------------------------------|
+| **Stellar Wallets Kit**  | Wallet-side library that the install flow targets. The two install transactions (deploy policy, then `add_context_rule`) are signed and submitted through whatever wallet adapter the user has wired. |
+| **Freighter Connect**    | Reference wallet for the install flow during development. Browser extension, Soroban-native, easy to drive from a test page. |
+| **Blend v2**             | Source of the yield-claim walkthrough. The `blend-yield-claim-policy` reference contract is written against Blend's `claim` (backstop) and `deposit` (pool) function shapes. |
+| **Soroswap**             | Source of the bounded-swap walkthrough. The `soroswap-bounded-policy` reference contract is written against `swap_exact_tokens_for_tokens` and `swap_tokens_for_exact_tokens`. |
+| **Aquarius** *(planned)* | Second DEX walkthrough during Tranche #2. Same constraint shape as Soroswap; tests that the synthesizer generalises across routers. |
+
+The wallet itself targeted for the deeper integration (record → synthesize
+→ install in one UI) is **kalepail/pollywallet**, per the RFP's explicit
+direction. Pollywallet is not on the integration list as a standalone
+entry, but the RFP names it as the canonical OZ-smart-account wallet to
+build against.
+
+### Stellar deployment topology
+
+```
+  ┌──────────────┐      ┌──────────────────┐      ┌────────────────┐
+  │  User wallet │ ───► │  Smart account   │ ───► │  Policy        │
+  │  (e.g.       │      │  contract        │      │  contract      │
+  │  pollywallet)│      │  (OZ extension)  │      │  (this tool's  │
+  └──────────────┘      └──────────────────┘      │  output)       │
+         │                       ▲                 └────────────────┘
+         │                       │                          ▲
+         │  add_context_rule     │                          │ enforce()
+         └───────────────────────┘                          │
+                                                            │
+                                              ┌─────────────┴───────────┐
+                                              │  Delegated agent / bot  │
+                                              │  (uses smart account    │
+                                              │  for one scoped op)     │
+                                              └─────────────────────────┘
+```
+
+Two on-chain transactions per install, both signed by the user:
+
+1. `stellar contract deploy --wasm <policy.wasm>` — produces the policy
+   contract address.
+2. `stellar contract invoke --id <smart_account> -- add_context_rule
+   --context <serialized> --policy <policy_address>` — attaches the policy
+   to a context rule on the smart account.
+
+The tool prints these commands and stops there. Signing happens in the
+wallet, on the user's keys.
+
+### Mainnet readiness checklist (Tranche #3)
+
+Specific to Stellar:
+
+- Generated `Cargo.toml` pins `soroban-sdk` to the version OZ's published
+  smart account contract was built with (currently `25.3.1`).
+- Generated contracts pass `cargo build --target wasm32v1-none --profile
+  contract` with no warnings, then `stellar contract optimize` to check
+  the resulting Wasm size sits inside Soroban's per-contract limit.
+- Audit of synthesizer logic completed against OZ's reference Policy
+  implementations before any mainnet install is recommended.
+- All three reference policies (`blend-yield-claim`, `soroswap-bounded`,
+  `sep41-subscription`) deployed to mainnet and listed by contract ID in
+  the docs site, so wallets can install them without rebuilding from
+  source.
+
 ## Process topology
 
 There are two processes:
